@@ -225,7 +225,7 @@ private Uni<Response> handleTokens(Tokens tokens, String state) {
                 userToken.email = email;
                 userToken.accessToken = tokens.getAccessToken();
                 userToken.refreshToken = tokens.getRefreshToken();
-                userToken.expiresAt = System.currentTimeMillis() + tokens.getAccessTokenExpiresIn() * 1000;
+                userToken.expiresAt =  tokens.getAccessTokenExpiresIn() * 1000;
                 return Panache.withTransaction(() -> userToken.persist().replaceWith(userToken))
                     .map(persisted -> Response.ok(persisted).build());
             })
@@ -305,9 +305,7 @@ public Uni<Response> getAccessToken(Long id) {
                                     .transformToUni(
                                         refreshedTokens -> {
                                             userToken.accessToken = refreshedTokens.getAccessToken();
-                                            userToken.expiresAt =
-                                                System.currentTimeMillis()
-                                                    + refreshedTokens.getAccessTokenExpiresIn() * 1000;
+                                            userToken.expiresAt = refreshedTokens.getAccessTokenExpiresIn() * 1000;
                                             if (refreshedTokens.getRefreshToken() != null) {
                                                 userToken.refreshToken = refreshedTokens.getRefreshToken();
                                             }
