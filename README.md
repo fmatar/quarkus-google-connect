@@ -1,3 +1,4 @@
+# Building a Google OAuth Connector with Quarkus: Secure Token Management and Refresh
 You know how it goes: when you're building apps that need to talk to Google APIs, OAuth is that unavoidable beast. You've got to juggle access tokens, handle refreshes when they expire, and store them securely—without starting from zero every time. It's frustrating, right? Time-sucking, prone to bugs, and not a lot of fun.
 
 In this post, I'll walk you through whipping up a quick Quarkus service that hooks into Google accounts with OIDC. It stores access and refresh tokens in PostgreSQL using Hibernate Reactive Panache, and gives you endpoints to fetch or refresh them on the fly. If you're tinkering with email automation, calendar syncs, or anything Google-powered, this setup will save you headaches and get your token management a breeze.
