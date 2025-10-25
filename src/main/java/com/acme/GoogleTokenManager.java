@@ -23,10 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @ApplicationScoped
 public class GoogleTokenManager {
 
-  private static final String AUTHORIZATION_ENDPOINT =
-    "https://accounts.google.com/o/oauth2/v2/auth";
-  private static final String USERINFO_ENDPOINT =
-    "https://openidconnect.googleapis.com/v1/userinfo";
+  private static final String AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
+  private static final String USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userinfo";
   private final Map<String, String> stateMap = new ConcurrentHashMap<>();
   @Inject
   OidcClient oidcClient;
@@ -108,42 +106,38 @@ public class GoogleTokenManager {
   }
 
     public Uni<Response> getAccessToken(Long id) {
-      return Panache.withTransaction(
-          () ->
-            UserToken.<UserToken>findById(id).onItem().transformToUni(
-              userToken -> {
-                if (userToken==null) {
-                  return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).entity(
-                    new ServiceError(Response.Status.NOT_FOUND.getStatusCode(), "UserToken not found")).build());
-                }
+      return Panache.withTransaction(() -> UserToken.<UserToken>findById(id).onItem().transformToUni(userToken -> {
+        if (userToken==null) {
+          return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).entity(
+            new ServiceError(Response.Status.NOT_FOUND.getStatusCode(), "UserToken not found")).build());
+        }
 
-                if (userToken.isAccessTokenExpired()) {
-                  if (userToken.refreshToken==null) {
-                    return Uni.createFrom().item(Response.status(Response.Status.UNAUTHORIZED).entity(
-                      new ServiceError(Response.Status.UNAUTHORIZED.getStatusCode(), "Refresh token not available")).build());
-                  }
+        if (userToken.isAccessTokenExpired()) {
+          if (userToken.refreshToken==null) {
+            return Uni.createFrom().item(Response.status(Response.Status.UNAUTHORIZED).entity(
+              new ServiceError(Response.Status.UNAUTHORIZED.getStatusCode(), "Refresh token not available")).build());
+          }
 
-                  var extraParams = new HashMap<String, String>();
-                  extraParams.put("refresh_token", userToken.refreshToken);
-                  extraParams.put("grant_type", "refresh_token");
+          var extraParams = new HashMap<String, String>();
+          extraParams.put("refresh_token", userToken.refreshToken);
+          extraParams.put("grant_type", "refresh_token");
 
-                  return oidcClient.getTokens(extraParams).onItem().transformToUni(refreshedTokens -> {
-                      userToken.accessToken = refreshedTokens.getAccessToken();
-                      userToken.expiresAt = refreshedTokens.getAccessTokenExpiresAt() * 1000;
-                      if (refreshedTokens.getRefreshToken()!=null) {
-                        userToken.refreshToken = refreshedTokens.getRefreshToken();
-                      }
-                      return userToken.persist().replaceWith(userToken);
-                    })
-                    .onItem().transform(updatedToken -> Response.ok(new AccessTokenResponse(updatedToken.accessToken)).build())
-                    .onFailure().recoverWithItem(t -> Response.serverError().entity(new ServiceError(
-                      Response.Status.INTERNAL_SERVER_ERROR.getStatusCode(), "Failed to refresh token: " + t.getMessage())).build());
-                } else {
-                  Log.infof("Token for user %s is not expired. Expiry date: %s", userToken.email, new Date(userToken.expiresAt));
-                  return Uni.createFrom().item(Response.ok(new AccessTokenResponse(userToken.accessToken)).build());
-                }
-              }))
-        .onFailure().recoverWithItem(t -> Response.serverError().entity(
+          return oidcClient.getTokens(extraParams).onItem().transformToUni(refreshedTokens -> {
+              userToken.accessToken = refreshedTokens.getAccessToken();
+              userToken.expiresAt = refreshedTokens.getAccessTokenExpiresAt() * 1000;
+              if (refreshedTokens.getRefreshToken()!=null) {
+                userToken.refreshToken = refreshedTokens.getRefreshToken();
+              }
+              return userToken.persist().replaceWith(userToken);
+            })
+            .onItem().transform(updatedToken -> Response.ok(new AccessTokenResponse(updatedToken.accessToken)).build())
+            .onFailure().recoverWithItem(t -> Response.serverError().entity(new ServiceError(
+              Response.Status.INTERNAL_SERVER_ERROR.getStatusCode(), "Failed to refresh token: " + t.getMessage())).build());
+        } else {
+          Log.infof("Token for user %s is not expired. Expiry date: %s", userToken.email, new Date(userToken.expiresAt));
+          return Uni.createFrom().item(Response.ok(new AccessTokenResponse(userToken.accessToken)).build());
+        }
+      })).onFailure().recoverWithItem(t -> Response.serverError().entity(
           new ServiceError(Response.Status.INTERNAL_SERVER_ERROR.getStatusCode(), "Error accessing token: " + t.getMessage())).build());
     }
 

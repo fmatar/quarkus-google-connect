@@ -38,28 +38,29 @@ This pulls in the key extensions: REST for endpoints, OIDC Client for auth, Hibe
 Your pom.xml should look something like this (trimmed for brevity—full version in the repo):
 
 ```xml
+
 <dependencies>
-    <dependency>
-        <groupId>io.quarkus</groupId>
-        <artifactId>quarkus-rest-jackson</artifactId>
-    </dependency>
-    <dependency>
-        <groupId>io.quarkus</groupId>
-        <artifactId>quarkus-oidc-client</artifactId>
-    </dependency>
-    <dependency>
-        <groupId>io.quarkus</groupId>
-        <artifactId>quarkus-hibernate-reactive-panache</artifactId>
-    </dependency>
-    <dependency>
-        <groupId>io.quarkus</groupId>
-        <artifactId>quarkus-reactive-pg-client</artifactId>
-    </dependency>
-    <dependency>
-        <groupId>io.quarkus</groupId>
-        <artifactId>quarkus-vertx</artifactId>
-    </dependency>
-    <!-- Other deps like arc, rest-client-jackson, etc. -->
+  <dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-rest-jackson</artifactId>
+  </dependency>
+  <dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-oidc-client</artifactId>
+  </dependency>
+  <dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-hibernate-reactive-panache</artifactId>
+  </dependency>
+  <dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-reactive-pg-client</artifactId>
+  </dependency>
+  <dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-vertx</artifactId>
+  </dependency>
+  <!-- Other deps like arc, rest-client-jackson, etc. -->
 </dependencies>
 ```
 
@@ -122,23 +123,24 @@ The logic for generating the authorization URL is in `GoogleTokenManager.java`. 
 Here's the key method in the token manager:
 
 ```java
-  public Uni<String> connect() {
-    return Uni.createFrom()
-        .item(
-            () -> {
-              var state = UUID.randomUUID().toString();
-              var authUrl =
-                  UriBuilder.fromUri(AUTHORIZATION_ENDPOINT)
-                      .queryParam("client_id", clientId)
-                      .queryParam("redirect_uri", REDIRECT_URI)
-                      .queryParam("scope", "openid email profile")
-                      .queryParam("response_type", "code")
-                      .queryParam("access_type", "offline")
-                      .queryParam("prompt", "consent")
-                      .queryParam("state", state);
-              return authUrl.build().toString();
-            });
-  }
+  import io.smallrye.mutiny.Uni;
+import jakarta.ws.rs.core.UriBuilder;
+
+public Uni<String> connect() {
+  return Uni.createFrom().item(() -> {
+    var state = UUID.randomUUID().toString();
+    var authUrl =
+      UriBuilder.fromUri(AUTHORIZATION_ENDPOINT)
+        .queryParam("client_id", clientId)
+        .queryParam("redirect_uri", REDIRECT_URI)
+        .queryParam("scope", "openid email profile")
+        .queryParam("response_type", "code")
+        .queryParam("access_type", "offline")
+        .queryParam("prompt", "consent")
+        .queryParam("state", state);
+    return authUrl.build().toString();
+  });
+}
 ```
 
 - state: A UUID to verify later in the callback—essential for security.
@@ -168,74 +170,61 @@ The `handleCallback` method in `GoogleTokenManager.java` does the heavy lifting.
 Key snippet:
 
 ```java
+import com.acme.ServiceError;
+import io.smallrye.mutiny.Uni;
+import jakarta.ws.rs.core.Response;
+
 public Uni<Response> handleCallback(String code, String state) {
-    if (code == null) {
-        return Uni.createFrom()
-            .item(
-                Response.status(Response.Status.BAD_REQUEST)
-                    .entity(new ServiceError(Response.Status.BAD_REQUEST.getStatusCode(), "Missing code"))
-                    .build());
-    }
+  if (code==null) {
+    return Uni.createFrom().item(
+      Response.status(Response.Status.BAD_REQUEST)
+        .entity(new ServiceError(Response.Status.BAD_REQUEST.getStatusCode(), "Missing code"))
+        .build());
+  }
 
-    var extraParams = new HashMap<String, String>();
-    extraParams.put("code", code);
-    extraParams.put("redirect_uri", REDIRECT_URI);
+  var extraParams = new HashMap<String, String>();
+  extraParams.put("code", code);
+  extraParams.put("redirect_uri", REDIRECT_URI);
 
-    return oidcClient
-        .getTokens(extraParams)
-        .flatMap(tokens -> handleTokens(tokens, state))
-        .onFailure()
-        .recoverWithItem(
-            t ->
-                Response.serverError()
-                    .entity(new ServiceError(500, "Token exchange failed"))
-                    .build());
+  return oidcClient
+    .getTokens(extraParams)
+    .flatMap(tokens -> handleTokens(tokens, state))
+    .onFailure().recoverWithItem(t ->
+      Response.serverError().entity(new ServiceError(500, "Token exchange failed")).build());
 }
 ```
 
 The `handleTokens` method fires off a request to Google's userinfo endpoint with the access token to grab details like `sub` (unique ID) and email. Then it creates a `UserToken` entity and persists it reactively with Panache. The `expiresAt` field is now correctly calculated by adding `getAccessTokenExpiresIn()` (in seconds) to the current system time (in milliseconds).
 
 ```java
-private Uni<Response> handleTokens(Tokens tokens, String state) {
-    var client = WebClient.create(vertx);
+  private Uni<Response> handleTokens(Tokens tokens, String state) {
+  var client = WebClient.create(vertx);
 
-    return client
-        .getAbs(USERINFO_ENDPOINT)
-        .putHeader("Authorization", "Bearer " + tokens.getAccessToken())
-        .send()
-        .flatMap(
-            resp -> {
-                if (resp.statusCode() != 200) {
-                    return Uni.createFrom()
-                        .item(
-                            Response.serverError()
-                                .entity(
-                                    new ServiceError(
-                                        resp.statusCode(),
-                                        "Userinfo failed with status: " + resp.statusCode()))
-                                .build());
-                }
-                io.vertx.core.json.JsonObject userInfo = resp.bodyAsJsonObject();
+  return client.getAbs(USERINFO_ENDPOINT)
+    .putHeader("Authorization", "Bearer " + tokens.getAccessToken()).send().flatMap(resp -> {
+      if (resp.statusCode()!=Response.Status.OK.getStatusCode()) {
+        return Uni.createFrom().item(Response.serverError().entity(
+            new ServiceError(
+              resp.statusCode(),
+              "Userinfo failed with status: " + resp.statusCode()))
+          .build());
+      }
+      JsonObject userInfo = resp.bodyAsJsonObject();
 
-                var sub = userInfo.getString("sub");
-                var email = userInfo.getString("email");
+      var sub = userInfo.getString("sub");
+      var email = userInfo.getString("email");
 
-                UserToken userToken = new UserToken();
-                userToken.userSub = sub;
-                userToken.email = email;
-                userToken.accessToken = tokens.getAccessToken();
-                userToken.refreshToken = tokens.getRefreshToken();
-                userToken.expiresAt =  tokens.getAccessTokenExpiresIn() * 1000;
-                return Panache.withTransaction(() -> userToken.persist().replaceWith(userToken))
-                    .map(persisted -> Response.ok(persisted).build());
-            })
-        .onFailure()
-        .recoverWithItem(
-            t ->
-                Response.serverError().entity(new ServiceError(500, "Error processing tokens: " + t.getMessage()))
-                    .build())
-        .onItemOrFailure()
-        .invoke(client::close);
+      var userToken = new UserToken();
+      userToken.userSub = sub;
+      userToken.email = email;
+      userToken.accessToken = tokens.getAccessToken();
+      userToken.refreshToken = tokens.getRefreshToken();
+      userToken.expiresAt = tokens.getAccessTokenExpiresAt() * 1000;
+      return Panache.withTransaction(() -> userToken.persist().replaceWith(userToken)).map(persisted -> Response.ok(new ConnectResponse(persisted.id, persisted.email)).build());
+    })
+    .onFailure().recoverWithItem(t -> Response.serverError().entity(
+      new ServiceError(Response.Status.INTERNAL_SERVER_ERROR.getStatusCode(), "Error processing tokens: " + t.getMessage())).build())
+    .onItemOrFailure().invoke(client::close);
 }
 ```
 
@@ -250,11 +239,15 @@ private Uni<Response> handleTokens(Tokens tokens, String state) {
 The endpoint in `GoogleConnectResource.java` now delegates to the `GoogleTokenManager`:
 
 ```java
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.QueryParam;
+
 @GET
 @Path("callback")
 public Uni<Response> callback(
-    @QueryParam("code") String code, @QueryParam("state") String state) {
-    return tokenManager.handleCallback(code, state);
+  @QueryParam("code") String code, @QueryParam("state") String state) {
+  return tokenManager.handleCallback(code, state);
 }
 ```
 
@@ -270,72 +263,47 @@ The core logic lives in `GoogleTokenManager.java`'s `getAccessToken` method. It 
 Here's the method (abridged for focus):
 
 ```java
+import com.acme.ServiceError;
+import com.acme.UserToken;
+import io.quarkus.hibernate.reactive.panache.Panache;
+import io.quarkus.logging.Log;
+import io.smallrye.mutiny.Uni;
+import jakarta.ws.rs.core.Response;
+
 public Uni<Response> getAccessToken(Long id) {
-    return Panache.withTransaction(
-            () ->
-                UserToken.<UserToken>findById(id)
-                    .onItem()
-                    .transformToUni(
-                        userToken -> {
-                            if (userToken == null) {
-                                return Uni.createFrom()
-                                    .item(
-                                        Response.status(Response.Status.NOT_FOUND)
-                                            .entity(new ServiceError(404, "UserToken not found"))
-                                            .build());
-                            }
+  return Panache.withTransaction(() -> UserToken.<UserToken>findById(id).onItem().transformToUni(userToken -> {
+      if (userToken==null) {
+        return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).entity(new ServiceError(404, "UserToken not found")).build());
+      }
 
-                            if (userToken.isAccessTokenExpired()) {
-                                if (userToken.refreshToken == null) {
-                                    return Uni.createFrom()
-                                        .item(
-                                            Response.status(Response.Status.UNAUTHORIZED)
-                                                .entity(
-                                                    new ServiceError(401, "Refresh token not available"))
-                                                .build());
-                                }
+      if (userToken.isAccessTokenExpired()) {
+        if (userToken.refreshToken==null) {
+          return Uni.createFrom().item(Response.status(Response.Status.UNAUTHORIZED).entity(new ServiceError(401, "Refresh token not available")).build());
+        }
 
-                                var extraParams = new HashMap<String, String>();
-                                extraParams.put("refresh_token", userToken.refreshToken);
-                                extraParams.put("grant_type", "refresh_token");
+        var extraParams = new HashMap<String, String>();
+        extraParams.put("refresh_token", userToken.refreshToken);
+        extraParams.put("grant_type", "refresh_token");
 
-                                return oidcClient
-                                    .getTokens(extraParams)
-                                    .onItem()
-                                    .transformToUni(
-                                        refreshedTokens -> {
-                                            userToken.accessToken = refreshedTokens.getAccessToken();
-                                            userToken.expiresAt = refreshedTokens.getAccessTokenExpiresIn() * 1000;
-                                            if (refreshedTokens.getRefreshToken() != null) {
-                                                userToken.refreshToken = refreshedTokens.getRefreshToken();
-                                            }
-                                            return userToken.persist().replaceWith(userToken);
-                                        })
-                                    .onItem()
-                                    .transform(
-                                        updatedToken -> Response.ok(updatedToken.accessToken).build())
-                                    .onFailure()
-                                    .recoverWithItem(
-                                        t ->
-                                            Response.serverError()
-                                                .entity(
-                                                    new ServiceError(
-                                                        500, "Failed to refresh token: " + t.getMessage()))
-                                                .build());
-                            } else {
-                                Log.infof(
-                                    "Token for user %s is not expired. Expiry date: %s",
-                                    userToken.email, new Date(userToken.expiresAt));
-                                return Uni.createFrom()
-                                    .item(Response.ok(userToken.accessToken).build());
-                            }
-                        }))
-        .onFailure()
-        .recoverWithItem(
-            t ->
-                Response.serverError()
-                    .entity(new ServiceError(500, "Error accessing token: " + t.getMessage()))
-                    .build());
+        return oidcClient.getTokens(extraParams).onItem().transformToUni(
+            refreshedTokens -> {
+              userToken.accessToken = refreshedTokens.getAccessToken();
+              userToken.expiresAt = refreshedTokens.getAccessTokenExpiresIn() * 1000;
+              if (refreshedTokens.getRefreshToken()!=null) {
+                userToken.refreshToken = refreshedTokens.getRefreshToken();
+              }
+              return userToken.persist().replaceWith(userToken);
+            })
+          .onItem().transform(updatedToken -> Response.ok(updatedToken.accessToken).build())
+          .onFailure().recoverWithItem(t -> Response.serverError().entity(
+            new ServiceError(500, "Failed to refresh token: " + t.getMessage())).build());
+      } else {
+        Log.infof("Token for user %s is not expired. Expiry date: %s", userToken.email, new Date(userToken.expiresAt));
+        return Uni.createFrom().item(Response.ok(userToken.accessToken).build());
+      }
+    }))
+    .onFailure().recoverWithItem(t ->
+      Response.serverError().entity(new ServiceError(500, "Error accessing token: " + t.getMessage())).build());
 }
 ```
 
@@ -350,11 +318,16 @@ public Uni<Response> getAccessToken(Long id) {
 The REST exposure in `GoogleConnectResource.java` now delegates to the `GoogleTokenManager`:
 
 ```java
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.core.MediaType;
+
 @GET
 @Path("token/{id}")
 @Produces(MediaType.TEXT_PLAIN)
 public Uni<Response> getAccessToken(@PathParam("id") Long id) {
-    return tokenManager.getAccessToken(id);
+  return tokenManager.getAccessToken(id);
 }
 ```
 
@@ -368,35 +341,40 @@ To store the tokens and user details, we use a simple JPA entity with Hibernate 
 The UserToken.java class is our entity:
 
 ```java
+
+import io.quarkus.hibernate.reactive.panache.PanacheEntity;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+
 @Entity
 public class UserToken extends PanacheEntity {
 
-    public String userSub; // Google's unique subject ID from ID token
-    public String email; // User's email from ID token
+  public String userSub; // Google's unique subject ID from ID token
+  public String email; // User's email from ID token
 
-    @Column(name = "access_token", columnDefinition = "text")
-    public String accessToken; // Access token for Google APIs
+  @Column(name = "access_token", columnDefinition = "text")
+  public String accessToken; // Access token for Google APIs
 
-    @Column(name = "refresh_token", columnDefinition = "text")
-    public String refreshToken; // Refresh token for renewing access
+  @Column(name = "refresh_token", columnDefinition = "text")
+  public String refreshToken; // Refresh token for renewing access
 
-    public Long expiresAt;
+  public Long expiresAt;
 
-    public Long getId() {
-        return id;
+  public Long getId() {
+    return id;
+  }
+
+  public void setId(Long id) {
+    this.id = id;
+  }
+
+  public boolean isAccessTokenExpired() {
+    if (expiresAt==null) {
+      return true;
     }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public boolean isAccessTokenExpired() {
-        if (expiresAt == null) {
-            return true;
-        }
-        // Adding a 60 second buffer for clock skew
-        return System.currentTimeMillis() > (expiresAt - 60000);
-    }
+    // Adding a 60 second buffer for clock skew
+    return System.currentTimeMillis() > (expiresAt - 60000);
+  }
 }
 ```
 
